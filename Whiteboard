@@ -1,0 +1,225 @@
+const WebSocket = require('ws');
+
+const wss = new WebSocket.Server({ port: 8081 });
+
+wss.on('connection', (ws) => {
+  console.log('Client connected');
+
+  ws.on('message', (message) => {
+    // Broadcast incoming message to all clients
+    wss.clients.forEach((client) => {
+      if (client !== ws && client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+  });
+
+  ws.on('close', () => {
+    console.log('Client disconnected');
+  });
+});
+
+console.log('WebSocket server is running on ws://localhost:8081');
+import React, { useState, useEffect, useRef } from 'react';
+import { Form, Button, ListGroup } from 'react-bootstrap';
+
+const Chat: React.FC = () => {
+  const [messages, setMessages] = useState<string[]>([]);
+  const [message, setMessage] = useState<string>('');
+  const socket = useRef<WebSocket | null>(null);
+
+  useEffect(() => {
+    socket.current = new WebSocket('ws://localhost:8081');
+
+    socket.current.onmessage = (event) => {
+      setMessages((prevMessages) => [...prevMessages, event.data]);
+    };
+
+    return () => {
+      socket.current?.close();
+    };
+  }, []);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (socket.current && message.trim()) {
+      socket.current.send(message);
+      setMessage('');
+    }
+  };
+
+  return (
+    <div>
+      <ListGroup>
+        {messages.map((msg, index) => (
+          <ListGroup.Item key={index}>{msg}</ListGroup.Item>
+        ))}
+      </ListGroup>
+      <Form onSubmit={handleSubmit}>
+        <Form.Control
+          type="text"
+          value={message}
+          onChange={(e) => setMessage(e.target.value)}
+          placeholder="Type your message"
+        />
+        <Button type="submit" variant="primary">Send</Button>
+      </Form>
+    </div>
+  );
+};
+
+export default Chat;
+import React from 'react';
+import Whiteboard from './Whiteboard';
+import Chat from './Chat';
+
+const WhiteboardPage: React.FC = () => {
+  return (
+    <div>
+      <Whiteboard />
+      <Chat />
+    </div>
+  );
+};
+
+export default WhiteboardPage;
+const express = require('express');
+const nodemailer = require('nodemailer');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+
+const app = express();
+app.use(bodyParser.json());
+app.use(cors());
+
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'your-email@gmail.com',
+    pass: 'your-email-password',
+  },
+});
+
+app.post('/invite', (req, res) => {
+  const { email, sessionId } = req.body;
+  const mailOptions = {
+    from: 'your-email@gmail.com',
+    to: email,
+    subject: 'Invitation to Whiteboard Session',
+    text: `You have been invited to join the whiteboard session. Click the link to join: http://your-app-url/join/${sessionId}`,
+  };
+
+  transporter.sendMail(mailOptions, (error, info) => {
+    if (error) {
+      return res.status(500).send('Error sending email');
+    }
+    res.status(200).send('Invitation sent');
+  });
+});
+
+app.listen(3000, () => {
+  console.log('Server is running on http://localhost:3000');
+});
+import React, { useState } from 'react';
+import { Form, Button } from 'react-bootstrap';
+import axios from 'axios';
+
+const Invite: React.FC = () => {
+  const [email, setEmail] = useState<string>('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    axios.post('http://localhost:3000/invite', { email, sessionId: 'your-session-id' })
+      .then(() => alert('Invitation sent'))
+      .catch(() => alert('Error sending invitation'));
+  };
+
+  return (
+    <Form onSubmit={handleSubmit}>
+      <Form.Control
+        type="email"
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
+        placeholder="Enter email to invite"
+      />
+      <Button type="submit" variant="primary">Send Invitation</Button>
+    </Form>
+  );
+};
+
+export default Invite;
+import React from 'react';
+import Whiteboard from './Whiteboard';
+import Invite from './Invite';
+
+const WhiteboardPage: React.FC = () => {
+  return (
+    <div>
+      <Whiteboard />
+      <Invite />
+    </div>
+  );
+};
+
+export default WhiteboardPage;
+import React from 'react';
+import html2canvas from 'html2canvas';
+import { createFFmpeg, fetchFile } from '@ffmpeg/ffmpeg';
+
+const ExportVideo: React.FC = () => {
+  const captureAndExport = async () => {
+    const ffmpeg = createFFmpeg({ log: true });
+    await ffmpeg.load();
+
+    const frames: string[] = [];
+    for (let i = 0; i < 30; i++) {
+      const canvas = await html2canvas(document.querySelector('#whiteboard-canvas')!);
+      const dataURL = canvas.toDataURL('image/png');
+      frames.push(dataURL);
+      // Add delay to simulate video frame rate
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+
+    // Convert frames to video
+    for (let i = 0; i < frames.length; i++) {
+      const frame = frames[i];
+      await ffmpeg.FS('writeFile', `frame${i}.png`, await fetchFile(frame));
+    }
+
+    await ffmpeg.run(
+      '-framerate', '30',
+      '-i', 'frame%d.png',
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      'output.mp4'
+    );
+
+    const data = ffmpeg.FS('readFile', 'output.mp4');
+    const videoBlob = new Blob([data.buffer], { type: 'video/mp4' });
+    const url = URL.createObjectURL(videoBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'whiteboard-video.mp4';
+    a.click();
+  };
+
+  return (
+    <button onClick={captureAndExport}>Export as Video</button>
+  );
+};
+
+export default ExportVideo;
+import React from 'react';
+import Whiteboard from './Whiteboard';
+import ExportVideo from './ExportVideo';
+
+const WhiteboardPage: React.FC = () => {
+  return (
+    <div>
+      <Whiteboard />
+      <ExportVideo />
+    </div>
+  );
+};
+
+export default WhiteboardPage;
